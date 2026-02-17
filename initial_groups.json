@@ -1,0 +1,98 @@
+[
+  {
+    "group_id": "FG01",
+    "group_name": "Small Pelagic Fish (Planktivores)",
+    "description": "Small schooling pelagic fish that feed primarily on plankton. Key forage species in the ecosystem.",
+    "characteristics": {
+      "habitat": "pelagic",
+      "trophic_level": "planktivore",
+      "size_class": "small",
+      "taxonomic_affinity": "Clupeiformes"
+    },
+    "species": []
+  },
+  {
+    "group_id": "FG02",
+    "group_name": "Large Pelagic Predators (Tunas & Billfish)",
+    "description": "Large migratory pelagic predators including tunas, marlins, and sailfish. Top predators in the pelagic zone.",
+    "characteristics": {
+      "habitat": "pelagic",
+      "trophic_level": "carnivore",
+      "size_class": "large",
+      "taxonomic_affinity": "Scombriformes/Istiophoriformes"
+    },
+    "species": []
+  },
+  {
+    "group_id": "FG03",
+    "group_name": "Demersal Reef Predators",
+    "description": "Medium to large demersal fish associated with rocky reefs and hard substrates. Important commercial species.",
+    "characteristics": {
+      "habitat": "demersal",
+      "trophic_level": "carnivore",
+      "size_class": "medium-large",
+      "taxonomic_affinity": "Perciformes"
+    },
+    "species": []
+  },
+  {
+    "group_id": "FG04",
+    "group_name": "Benthic Filter Feeders (Bivalves)",
+    "description": "Sessile or semi-sessile bivalve mollusks that filter-feed on suspended particles.",
+    "characteristics": {
+      "habitat": "benthic",
+      "trophic_level": "filter_feeder",
+      "size_class": "small-medium",
+      "taxonomic_affinity": "Bivalvia"
+    },
+    "species": []
+  },
+  {
+    "group_id": "FG05",
+    "group_name": "Marine Mammals (Cetaceans)",
+    "description": "Whales and dolphins. Important apex or mid-level predators and filter feeders in the pelagic ecosystem.",
+    "characteristics": {
+      "habitat": "pelagic",
+      "trophic_level": "mixed",
+      "size_class": "large-very_large",
+      "taxonomic_affinity": "Cetacea"
+    },
+    "species": []
+  },
+  {
+    "group_id": "FG06",
+    "group_name": "Benthic Detritivores (Holothurians)",
+    "description": "Sea cucumbers and other benthic organisms that process sediment organic matter. Key bioturbators.",
+    "characteristics": {
+      "habitat": "benthic",
+      "trophic_level": "detritivore",
+      "size_class": "medium",
+      "taxonomic_affinity": "Holothuroidea"
+    },
+    "species": []
+  },
+  {
+    "group_id": "FG07",
+    "group_name": "Penaeid Shrimp",
+    "description": "Commercially important benthic shrimp species. Omnivorous detritivores and prey for many predators.",
+    "characteristics": {
+      "habitat": "benthic",
+      "trophic_level": "omnivore",
+      "size_class": "small",
+      "taxonomic_affinity": "Penaeidae"
+    },
+    "species": []
+  },
+  {
+    "group_id": "FG08",
+    "group_name": "Hermatypic Corals",
+    "description": "Reef-building scleractinian corals. Foundation species creating habitat structure.",
+    "characteristics": {
+      "habitat": "benthic",
+      "trophic_level": "mixotroph",
+      "size_class": "colonial",
+      "taxonomic_affinity": "Scleractinia"
+    },
+    "species": []
+  }
+]
