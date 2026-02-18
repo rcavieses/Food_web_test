@@ -21,6 +21,8 @@ def compute_quantitative_scores(
     Calcula métricas cuantitativas para cada grupo basándose en los datos.
 
     Este método complementa la evaluación del LLM con datos concretos.
+    Trabaja con los atributos disponibles en el DataFrame (puede ser
+    solo species_name, o incluir atributos adicionales).
 
     Parameters
     ----------
@@ -35,6 +37,7 @@ def compute_quantitative_scores(
         Grupos con campo 'quantitative_metrics' añadido.
     """
     total_species = len(species_df)
+    has_col = lambda c: c in species_df.columns
     species_data = species_df.set_index("species_name")
 
     for group in groups:
@@ -43,7 +46,7 @@ def compute_quantitative_scores(
 
         metrics = {}
 
-        # 1. Riqueza de especies (normalizada)
+        # 1. Riqueza de especies (normalizada) — siempre disponible
         metrics["species_richness"] = min(n_species / max(total_species * 0.1, 1), 1.0)
 
         if n_species == 0:
@@ -54,48 +57,60 @@ def compute_quantitative_scores(
             group["quantitative_metrics"] = metrics
             continue
 
-        # 2. Valor comercial promedio
-        commercial_values = []
-        for sp in sp_list:
-            if sp in species_data.index:
-                ci = species_data.loc[sp, "commercial_importance"]
-                commercial_values.append(COMMERCIAL_IMPORTANCE_MAP.get(ci, 0.5))
-        metrics["avg_commercial_value"] = (
-            sum(commercial_values) / len(commercial_values) if commercial_values else 0
-        )
+        # 2. Valor comercial promedio (si hay columna)
+        if has_col("commercial_importance"):
+            commercial_values = []
+            for sp in sp_list:
+                if sp in species_data.index:
+                    ci = species_data.loc[sp, "commercial_importance"]
+                    commercial_values.append(COMMERCIAL_IMPORTANCE_MAP.get(ci, 0.5))
+            metrics["avg_commercial_value"] = (
+                sum(commercial_values) / len(commercial_values) if commercial_values else 0
+            )
+        else:
+            metrics["avg_commercial_value"] = 0.5  # Default neutro
 
-        # 3. Importancia trófica promedio
-        trophic_values = []
-        for sp in sp_list:
-            if sp in species_data.index:
-                tl = species_data.loc[sp, "trophic_level"]
-                trophic_values.append(TROPHIC_IMPORTANCE_MAP.get(tl, 0.5))
-        metrics["avg_trophic_importance"] = (
-            sum(trophic_values) / len(trophic_values) if trophic_values else 0
-        )
+        # 3. Importancia trófica promedio (si hay columna)
+        if has_col("trophic_level"):
+            trophic_values = []
+            for sp in sp_list:
+                if sp in species_data.index:
+                    tl = species_data.loc[sp, "trophic_level"]
+                    trophic_values.append(TROPHIC_IMPORTANCE_MAP.get(tl, 0.5))
+            metrics["avg_trophic_importance"] = (
+                sum(trophic_values) / len(trophic_values) if trophic_values else 0
+            )
+        else:
+            metrics["avg_trophic_importance"] = 0.5
 
-        # 4. Presencia de especies protegidas
-        protected = 0
-        for sp in sp_list:
-            if sp in species_data.index:
-                if species_data.loc[sp, "commercial_importance"] == "protected":
-                    protected += 1
-        metrics["has_protected_species"] = min(protected / max(n_species, 1), 1.0)
+        # 4. Presencia de especies protegidas (si hay columna)
+        if has_col("commercial_importance"):
+            protected = 0
+            for sp in sp_list:
+                if sp in species_data.index:
+                    if species_data.loc[sp, "commercial_importance"] == "protected":
+                        protected += 1
+            metrics["has_protected_species"] = min(protected / max(n_species, 1), 1.0)
+        else:
+            metrics["has_protected_species"] = 0
 
-        # 5. Rango de profundidad (diversidad de hábitat)
-        depths = []
-        for sp in sp_list:
-            if sp in species_data.index:
-                depth_str = str(species_data.loc[sp, "depth_range_m"])
-                parts = depth_str.split("-")
-                if len(parts) == 2:
-                    try:
-                        depths.append(float(parts[1]) - float(parts[0]))
-                    except ValueError:
-                        pass
-        metrics["depth_range_span"] = (
-            min(max(depths) / 2000, 1.0) if depths else 0
-        )
+        # 5. Rango de profundidad (si hay columna)
+        if has_col("depth_range_m"):
+            depths = []
+            for sp in sp_list:
+                if sp in species_data.index:
+                    depth_str = str(species_data.loc[sp, "depth_range_m"])
+                    parts = depth_str.split("-")
+                    if len(parts) == 2:
+                        try:
+                            depths.append(float(parts[1]) - float(parts[0]))
+                        except ValueError:
+                            pass
+            metrics["depth_range_span"] = (
+                min(max(depths) / 2000, 1.0) if depths else 0
+            )
+        else:
+            metrics["depth_range_span"] = 0
 
         group["quantitative_metrics"] = metrics
 

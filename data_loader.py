@@ -14,7 +14,7 @@ from config import SPECIES_CSV, INITIAL_GROUPS_JSON
 
 def load_species_data(filepath: Optional[Path] = None) -> pd.DataFrame:
     """
-    Carga la base de datos de registros de ocurrencia de especies.
+    Carga la lista de especies únicas.
 
     Parameters
     ----------
@@ -24,29 +24,28 @@ def load_species_data(filepath: Optional[Path] = None) -> pd.DataFrame:
     Returns
     -------
     pd.DataFrame
-        DataFrame con las columnas de especies y sus atributos.
+        DataFrame con la columna species_name.
     """
     fp = filepath or SPECIES_CSV
     df = pd.read_csv(fp)
-    print(f"[DataLoader] Cargadas {len(df)} filas de especies desde {fp.name}")
+    print(f"[DataLoader] Cargadas {len(df)} especies desde {fp.name}")
     return df
 
 
 def get_unique_species(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Extrae la lista de valores únicos de especie con sus atributos.
+    Extrae la lista de valores únicos de especie.
 
     Parameters
     ----------
     df : pd.DataFrame
-        DataFrame completo de ocurrencias.
+        DataFrame con columna species_name.
 
     Returns
     -------
     pd.DataFrame
-        DataFrame con una fila por especie única y todos sus atributos.
+        DataFrame con una fila por especie única.
     """
-    # Si hay duplicados, tomamos la primera ocurrencia de cada especie
     unique_df = df.drop_duplicates(subset="species_name").reset_index(drop=True)
     print(f"[DataLoader] {len(unique_df)} especies únicas identificadas")
     return unique_df
@@ -101,17 +100,20 @@ def species_to_text_list(species_df: pd.DataFrame) -> str:
     Returns
     -------
     str
-        Texto con la información de cada especie.
+        Texto con la lista de nombres científicos.
     """
     lines = []
     for _, row in species_df.iterrows():
-        lines.append(
-            f"- {row['species_name']} | Phylum: {row['phylum']} | "
-            f"Class: {row['class']} | Order: {row['order']} | "
-            f"Family: {row['family']} | Habitat: {row['habitat']} | "
-            f"Trophic: {row['trophic_level']} | Depth: {row['depth_range_m']}m | "
-            f"Size: {row['body_size_cm']}cm | Commercial: {row['commercial_importance']}"
-        )
+        name = row["species_name"]
+        # Incluir atributos adicionales si existen en el DataFrame
+        extra_cols = [c for c in species_df.columns if c != "species_name"]
+        if extra_cols:
+            attrs = " | ".join(
+                f"{c}: {row[c]}" for c in extra_cols if pd.notna(row[c])
+            )
+            lines.append(f"- {name} | {attrs}" if attrs else f"- {name}")
+        else:
+            lines.append(f"- {name}")
     return "\n".join(lines)
 
 

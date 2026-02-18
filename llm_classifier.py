@@ -64,6 +64,7 @@ def _call_llm(system_prompt: str, user_prompt: str) -> str:
 def _extract_json_from_response(response: str) -> dict | list:
     """
     Extrae JSON de la respuesta del LLM, manejando posibles bloques de código.
+    Maneja JSON incompleto intentando cerrarlo automáticamente.
 
     Parameters
     ----------
@@ -78,12 +79,39 @@ def _extract_json_from_response(response: str) -> dict | list:
     # Intentar extraer de un bloque ```json ... ```
     json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
     if json_match:
-        return json.loads(json_match.group(1))
+        extracted = json_match.group(1)
+        try:
+            return json.loads(extracted)
+        except json.JSONDecodeError:
+            # Intentar cerrar incompletos
+            try:
+                incomplete = extracted.rstrip()
+                if incomplete.endswith(","):
+                    incomplete = incomplete[:-1]
+                if incomplete.startswith("["):
+                    return json.loads(incomplete + "]")
+                elif incomplete.startswith("{"):
+                    return json.loads(incomplete + "}")
+            except json.JSONDecodeError:
+                pass
 
     # Intentar extraer de un bloque ``` ... ```
     code_match = re.search(r"```\s*(.*?)\s*```", response, re.DOTALL)
     if code_match:
-        return json.loads(code_match.group(1))
+        extracted = code_match.group(1)
+        try:
+            return json.loads(extracted)
+        except json.JSONDecodeError:
+            try:
+                incomplete = extracted.rstrip()
+                if incomplete.endswith(","):
+                    incomplete = incomplete[:-1]
+                if incomplete.startswith("["):
+                    return json.loads(incomplete + "]")
+                elif incomplete.startswith("{"):
+                    return json.loads(incomplete + "}")
+            except json.JSONDecodeError:
+                pass
 
     # Intentar parsear directamente (buscar primer [ o {)
     for i, char in enumerate(response):
@@ -91,7 +119,15 @@ def _extract_json_from_response(response: str) -> dict | list:
             try:
                 return json.loads(response[i:])
             except json.JSONDecodeError:
-                continue
+                # Intentar cerrar incompleto
+                try:
+                    incomplete = response[i:].rstrip()
+                    if incomplete.endswith(","):
+                        incomplete = incomplete[:-1]
+                    closing = "]" if char == "[" else "}"
+                    return json.loads(incomplete + closing)
+                except json.JSONDecodeError:
+                    continue
 
     raise ValueError(f"No se pudo extraer JSON de la respuesta:\n{response[:500]}")
 
@@ -100,6 +136,9 @@ def _extract_json_from_response(response: str) -> dict | list:
 # PASO 1: Asignar especies a grupos existentes
 # ═══════════════════════════════════════════════════════════════════════
 
+BATCH_SIZE = 250  # Especies por llamada al LLM (balance entre eficiencia y confiabilidad)
+
+
 def classify_species_into_groups(
     species_text: str,
     groups_text: str,
@@ -107,6 +146,7 @@ def classify_species_into_groups(
 ) -> tuple[list[dict], list[str]]:
     """
     Usa el LLM para asignar cada especie a un grupo funcional existente.
+    Procesa en lotes de BATCH_SIZE especies para respetar los límites del LLM.
 
     Parameters
     ----------
@@ -123,7 +163,19 @@ def classify_species_into_groups(
         - Grupos actualizados con especies asignadas.
         - Lista de nombres de especies que no pudieron ser asignadas.
     """
-    system_prompt = """Eres un ecólogo marino experto en modelación de ecosistemas con ATLANTIS.
+    # Separar la lista de especies en líneas individuales
+    species_lines = [l for l in species_text.strip().split("\n") if l.strip()]
+    total = len(species_lines)
+
+    # Dividir en lotes
+    batches = [
+        species_lines[i : i + BATCH_SIZE]
+        for i in range(0, total, BATCH_SIZE)
+    ]
+    n_batches = len(batches)
+    print(f"[LLM] Clasificando {total} especies en {n_batches} lotes de ~{BATCH_SIZE}...")
+
+    system_prompt = """Eres un ecólogo marino experto en modelación de ecosistemas.
 Tu tarea es asignar especies a grupos funcionales existentes basándote en sus
 características ecológicas y funcionales.
 
@@ -133,11 +185,16 @@ REGLAS:
 - Prioriza el rol trófico y el hábitat sobre la taxonomía.
 - Responde ÚNICAMENTE con un JSON válido, sin texto adicional."""
 
-    user_prompt = f"""## GRUPOS FUNCIONALES ACTUALES:
+    group_map = {g["group_id"]: i for i, g in enumerate(groups)}
+    all_unassigned = []
+
+    for batch_idx, batch in enumerate(batches, 1):
+        batch_text = "\n".join(batch)
+        user_prompt = f"""## GRUPOS FUNCIONALES ACTUALES:
 {groups_text}
 
-## LISTA DE ESPECIES A CLASIFICAR:
-{species_text}
+## LISTA DE ESPECIES A CLASIFICAR (lote {batch_idx}/{n_batches}):
+{batch_text}
 
 ## INSTRUCCIÓN:
 Asigna cada especie al group_id del grupo funcional más apropiado.
@@ -147,37 +204,36 @@ Responde con un JSON con esta estructura:
 ```json
 {{
   "assignments": [
-    {{"species": "Nombre cientifico", "group_id": "FG01", "reason": "breve justificación"}},
-    {{"species": "Otra especie", "group_id": "sin_grupo", "reason": "motivo"}}
+    {{"species": "nombre cientifico", "group_id": "FG01", "reason": "breve justificación"}},
+    {{"species": "otra especie", "group_id": "sin_grupo", "reason": "motivo"}}
   ]
 }}
 ```"""
 
-    print("[LLM] Clasificando especies en grupos existentes...")
-    response = _call_llm(system_prompt, user_prompt)
-    result = _extract_json_from_response(response)
+        print(f"  [Lote {batch_idx}/{n_batches}] Procesando {len(batch)} especies...")
+        response = _call_llm(system_prompt, user_prompt)
+        result = _extract_json_from_response(response)
 
-    # Crear mapa de group_id -> índice
-    group_map = {g["group_id"]: i for i, g in enumerate(groups)}
-    unassigned = []
+        for assignment in result.get("assignments", []):
+            sp = assignment["species"]
+            gid = assignment["group_id"]
 
-    for assignment in result.get("assignments", []):
-        sp = assignment["species"]
-        gid = assignment["group_id"]
+            if gid == "sin_grupo" or gid not in group_map:
+                all_unassigned.append(sp)
+            else:
+                idx = group_map[gid]
+                if sp not in groups[idx]["species"]:
+                    groups[idx]["species"].append(sp)
 
-        if gid == "sin_grupo" or gid not in group_map:
-            unassigned.append(sp)
-        else:
-            idx = group_map[gid]
-            if sp not in groups[idx]["species"]:
-                groups[idx]["species"].append(sp)
+        assigned_so_far = sum(len(g["species"]) for g in groups)
+        print(f"  [Lote {batch_idx}/{n_batches}] Acumulado: {assigned_so_far} asignadas, {len(all_unassigned)} sin grupo")
 
     print(
         f"[LLM] Clasificación completada: "
         f"{sum(len(g['species']) for g in groups)} asignadas, "
-        f"{len(unassigned)} sin grupo"
+        f"{len(all_unassigned)} sin grupo"
     )
-    return groups, unassigned
+    return groups, all_unassigned
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -213,7 +269,7 @@ def create_groups_for_unassigned(
     existing_names = [g["group_name"] for g in existing_groups]
     next_id = len(existing_groups) + 1
 
-    system_prompt = """Eres un ecólogo marino experto en modelación de ecosistemas con ATLANTIS.
+    system_prompt = """Eres un ecólogo marino experto en modelación de ecosistemas.
 Tu tarea es crear NUEVOS grupos funcionales para especies que no encajan en los grupos existentes.
 
 REGLAS:
@@ -221,33 +277,46 @@ REGLAS:
 - Agrupa especies por similitud funcional (hábitat + nivel trófico + rol ecológico).
 - Evita crear grupos redundantes con los existentes.
 - Minimiza el número de grupos nuevos agrupando especies cuando sea ecológicamente válido.
+- No crees más de 40 grupos nuevos por lote.
 - Responde ÚNICAMENTE con un JSON válido, sin texto adicional."""
 
-    unassigned_str = "\n".join(f"- {sp}" for sp in unassigned_species)
+    # Procesar en lotes
+    batches = [
+        unassigned_species[i : i + BATCH_SIZE]
+        for i in range(0, len(unassigned_species), BATCH_SIZE)
+    ]
+    n_batches = len(batches)
+    print(
+        f"[LLM] Creando grupos para {len(unassigned_species)} especies "
+        f"sin clasificar ({n_batches} lotes)..."
+    )
 
-    user_prompt = f"""## ESPECIES SIN GRUPO ASIGNADO:
+    all_new_groups = []
+
+    for batch_idx, batch in enumerate(batches, 1):
+        unassigned_str = "\n".join(f"- {sp}" for sp in batch)
+        current_next_id = next_id + len(all_new_groups)
+
+        user_prompt = f"""## ESPECIES SIN GRUPO ASIGNADO (lote {batch_idx}/{n_batches}):
 {unassigned_str}
 
-## INFORMACIÓN COMPLETA DE ESPECIES (para referencia):
-{species_text}
-
 ## GRUPOS YA EXISTENTES (para evitar redundancias):
-{', '.join(existing_names)}
+{', '.join(existing_names + [g['group_name'] for g in all_new_groups])}
 
 ## INSTRUCCIÓN:
 Crea los grupos funcionales necesarios para clasificar estas especies.
-Comienza los IDs desde FG{next_id:02d}.
+Comienza los IDs desde FG{current_next_id:02d}.
 
 Responde con un JSON con esta estructura:
 ```json
 {{
   "new_groups": [
     {{
-      "group_id": "FG{next_id:02d}",
+      "group_id": "FG{current_next_id:02d}",
       "group_name": "Nombre descriptivo del grupo",
       "description": "Descripción del rol funcional en el ecosistema",
       "characteristics": {{
-        "habitat": "benthic/pelagic/demersal/coastal",
+        "habitat": "benthic/pelagic/demersal/coastal/terrestrial",
         "trophic_level": "carnivore/herbivore/omnivore/etc.",
         "size_class": "small/medium/large",
         "taxonomic_affinity": "grupo taxonómico principal"
@@ -258,13 +327,16 @@ Responde con un JSON con esta estructura:
 }}
 ```"""
 
-    print(f"[LLM] Creando grupos para {len(unassigned_species)} especies sin clasificar...")
-    response = _call_llm(system_prompt, user_prompt)
-    result = _extract_json_from_response(response)
+        print(f"  [Lote {batch_idx}/{n_batches}] Creando grupos para {len(batch)} especies...")
+        response = _call_llm(system_prompt, user_prompt)
+        result = _extract_json_from_response(response)
 
-    new_groups = result.get("new_groups", [])
-    print(f"[LLM] Se crearon {len(new_groups)} nuevos grupos funcionales")
-    return new_groups
+        new_groups = result.get("new_groups", [])
+        all_new_groups.extend(new_groups)
+        print(f"  [Lote {batch_idx}/{n_batches}] {len(new_groups)} grupos nuevos (total acumulado: {len(all_new_groups)})")
+
+    print(f"[LLM] Se crearon {len(all_new_groups)} nuevos grupos funcionales en total")
+    return all_new_groups
 
 
 # ═══════════════════════════════════════════════════════════════════════

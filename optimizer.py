@@ -259,24 +259,38 @@ def _heuristic_classify(
     """
     Clasificación heurística basada en coincidencia de atributos.
     Útil para testing sin conexión a la API.
+
+    Si el DataFrame solo tiene species_name (sin atributos ecológicos),
+    todas las especies quedan como no asignadas — lo cual fuerza al
+    modo LLM a crearlas.
     """
     unassigned = []
+    has_attrs = any(
+        c in species_df.columns
+        for c in ("habitat", "trophic_level", "order", "family")
+    )
 
     for _, row in species_df.iterrows():
         sp_name = row["species_name"]
+
+        if not has_attrs:
+            # Sin atributos ecológicos no podemos clasificar heurísticamente
+            unassigned.append(sp_name)
+            continue
+
         best_match = None
         best_score = -1
 
         for group in groups:
             chars = group.get("characteristics", {})
             score = 0
-            if chars.get("habitat") == row["habitat"]:
+            if chars.get("habitat") == row.get("habitat"):
                 score += 3
-            if chars.get("trophic_level") == row["trophic_level"]:
+            if chars.get("trophic_level") == row.get("trophic_level"):
                 score += 3
-            if row["order"] in chars.get("taxonomic_affinity", ""):
+            if str(row.get("order", "")) in chars.get("taxonomic_affinity", ""):
                 score += 2
-            if row["family"] in chars.get("taxonomic_affinity", ""):
+            if str(row.get("family", "")) in chars.get("taxonomic_affinity", ""):
                 score += 2
 
             if score > best_score:

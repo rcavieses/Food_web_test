@@ -7,13 +7,18 @@ Parámetros globales, rutas de archivos y criterios de evaluación.
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# ─── Cargar variables de entorno desde .env ──────────────────────────
+load_dotenv(Path(__file__).parent / ".env", override=True)
+
 # ─── Rutas del proyecto ───────────────────────────────────────────────
 PROJECT_DIR = Path(__file__).parent
 DATA_DIR = PROJECT_DIR / "data"
 OUTPUT_DIR = PROJECT_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-SPECIES_CSV = DATA_DIR / "species_occurrences.csv"
+SPECIES_CSV = DATA_DIR / "species_list.csv"
 INITIAL_GROUPS_JSON = DATA_DIR / "initial_groups.json"
 
 # ─── Restricciones del algoritmo ──────────────────────────────────────
@@ -25,7 +30,7 @@ TARGET_UNASSIGNED_RATIO = 0.05 # Objetivo: <5% de especies sin grupo
 # ─── Configuración del LLM ───────────────────────────────────────────
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 LLM_MODEL = "claude-sonnet-4-20250514"
-LLM_MAX_TOKENS = 4096
+LLM_MAX_TOKENS = 16384
 LLM_TEMPERATURE = 0.3  # Baja temperatura para consistencia en clasificación
 
 # ─── Criterios de puntaje para importancia de grupos ──────────────────
