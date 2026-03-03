@@ -1,7 +1,7 @@
 """
 llm_classifier.py - Interfaz con el LLM para clasificación de especies
 ========================================================================
-Usa la API de Anthropic para:
+Usa la API de Ollama (local) para:
   1. Asignar especies a grupos funcionales existentes.
   2. Crear nuevos grupos para especies no clasificadas.
   3. Proponer fusiones de grupos cuando se excede el límite.
@@ -11,32 +11,23 @@ import json
 import re
 from typing import Optional
 
-from anthropic import Anthropic
+import requests
 
 from config import (
-    ANTHROPIC_API_KEY,
-    LLM_MODEL,
+    OLLAMA_API_URL,
+    OLLAMA_MODEL,
     LLM_MAX_TOKENS,
     LLM_TEMPERATURE,
+    OLLAMA_TIMEOUT,
     MAX_GROUPS,
     SCORING_CRITERIA,
 )
 from data_loader import species_to_text_list, groups_to_text
 
 
-def _get_client() -> Anthropic:
-    """Crea el cliente de la API de Anthropic."""
-    if not ANTHROPIC_API_KEY:
-        raise ValueError(
-            "No se encontró ANTHROPIC_API_KEY. "
-            "Define la variable de entorno antes de ejecutar."
-        )
-    return Anthropic(api_key=ANTHROPIC_API_KEY)
-
-
 def _call_llm(system_prompt: str, user_prompt: str) -> str:
     """
-    Llamada genérica al LLM.
+    Llamada genérica al LLM vía Ollama API.
 
     Parameters
     ----------
@@ -49,16 +40,45 @@ def _call_llm(system_prompt: str, user_prompt: str) -> str:
     -------
     str
         Respuesta del modelo.
+        
+    Raises
+    ------
+    ConnectionError
+        Si no se puede conectar a Ollama.
     """
-    client = _get_client()
-    message = client.messages.create(
-        model=LLM_MODEL,
-        max_tokens=LLM_MAX_TOKENS,
-        temperature=LLM_TEMPERATURE,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-    return message.content[0].text
+    # Combinar el prompt del sistema con el del usuario
+    full_prompt = f"{system_prompt}\n\n{user_prompt}"
+    
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": full_prompt,
+        "stream": False,
+        "temperature": LLM_TEMPERATURE,
+    }
+    
+    try:
+        response = requests.post(
+            OLLAMA_API_URL,
+            json=payload,
+            timeout=OLLAMA_TIMEOUT,
+        )
+        response.raise_for_status()
+        
+        result = response.json()
+        return result.get("response", "")
+    except requests.exceptions.ConnectionError as e:
+        raise ConnectionError(
+            f"No se pudo conectar a Ollama en {OLLAMA_API_URL}. "
+            f"Asegúrate de que Ollama está ejecutándose: ollama serve\n"
+            f"Error: {e}"
+        ) from e
+    except requests.exceptions.Timeout:
+        raise TimeoutError(
+            f"Timeout esperando respuesta de Ollama (>{OLLAMA_TIMEOUT}s). "
+            f"Intenta con un modelo más pequeño o aumenta OLLAMA_TIMEOUT."
+        )
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"Error en la solicitud a Ollama: {e}") from e
 
 
 def _extract_json_from_response(response: str) -> dict | list:

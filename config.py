@@ -27,11 +27,15 @@ MAX_ITERATIONS = 10            # Iteraciones máximas del optimizador
 MIN_SPECIES_PER_GROUP = 1      # Mínimo de especies para considerar un grupo válido
 TARGET_UNASSIGNED_RATIO = 0.05 # Objetivo: <5% de especies sin grupo
 
-# ─── Configuración del LLM ───────────────────────────────────────────
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-LLM_MODEL = "claude-sonnet-4-20250514"
-LLM_MAX_TOKENS = 16384
+# ─── Configuración del LLM con Ollama ────────────────────────────────
+# Ollama es un servidor local que ejecuta modelos de LLM
+# Modelos recomendados: nous-hermes2 (⚡ MÁS RÁPIDO), mistral, llama2, neural-chat
+# Para descargar un modelo: ollama pull <nombre_modelo>
+OLLAMA_API_URL = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/generate")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "nous-hermes2")  # Modelo más rápido
+LLM_MAX_TOKENS = 4096  # Ollama tiene límites menores
 LLM_TEMPERATURE = 0.3  # Baja temperatura para consistencia en clasificación
+OLLAMA_TIMEOUT = 600  # Timeout en segundos (aumentado para hardware más lento)
 
 # ─── Criterios de puntaje para importancia de grupos ──────────────────
 # Cada criterio tiene un peso (weight) y una descripción.

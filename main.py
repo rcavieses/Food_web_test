@@ -7,8 +7,15 @@ Algoritmo iterativo asistido por LLM para generar una configuración
 óptima de grupos funcionales para un modelo ecosistémico ATLANTIS
 del Golfo de California.
 
+Usa Ollama como servidor LLM local (no requiere API keys en la nube).
+
+Requisitos previos:
+  1. Instalar Ollama desde https://ollama.ai
+  2. Descargar un modelo: ollama pull mistral (o llama2, neural-chat, etc.)
+  3. Ejecutar Ollama: ollama serve
+
 Uso:
-    # Con LLM (requiere ANTHROPIC_API_KEY):
+    # Con LLM vía Ollama (requiere que Ollama esté ejecutándose):
     python main.py
 
     # Sin LLM (solo heurísticas, para testing):
@@ -19,6 +26,9 @@ Uso:
 
     # Con grupos iniciales personalizados:
     python main.py --groups datos/mis_grupos.json
+    
+    # Especificar modelo de Ollama:
+    OLLAMA_MODEL=llama2 python main.py
 
 Autor: Generado para el proyecto ATLANTIS - Golfo de California
 """
@@ -31,7 +41,7 @@ from pathlib import Path
 # Añadir directorio del proyecto al path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import ANTHROPIC_API_KEY, OUTPUT_DIR
+from config import OLLAMA_API_URL, OLLAMA_MODEL, OUTPUT_DIR
 from data_loader import (
     load_species_data,
     get_unique_species,
@@ -68,26 +78,40 @@ def main():
     args = parse_args()
     use_llm = not args.no_llm
 
-    # Verificar API key si se usa LLM
-    if use_llm and not ANTHROPIC_API_KEY:
-        print(
-            "⚠️  ANTHROPIC_API_KEY no está definida.\n"
-            "   Opciones:\n"
-            "   1. export ANTHROPIC_API_KEY='tu-api-key'\n"
-            "   2. Ejecutar con --no-llm para usar solo heurísticas\n"
-        )
-        # Intentar modo heurístico como fallback
-        response = input("¿Deseas continuar sin LLM? (s/n): ").strip().lower()
-        if response in ("s", "si", "sí", "y", "yes"):
-            use_llm = False
-        else:
-            sys.exit(1)
+    # Verificar conexión a Ollama si se usa LLM
+    if use_llm:
+        try:
+            import requests
+            print(f"🔍 Verificando conexión a Ollama en {OLLAMA_API_URL}...")
+            response = requests.post(
+                OLLAMA_API_URL,
+                json={"model": OLLAMA_MODEL, "prompt": "test", "stream": False},
+                timeout=5,
+            )
+            if response.status_code != 200:
+                raise ConnectionError("Ollama no responde correctamente")
+            print(f"✅ Ollama conectado. Modelo: {OLLAMA_MODEL}")
+        except Exception as e:
+            print(
+                f"⚠️  No se pudo conectar a Ollama en {OLLAMA_API_URL}\n"
+                f"   Error: {e}\n"
+                f"   Soluciones:\n"
+                f"   1. Instalar Ollama desde https://ollama.ai\n"
+                f"   2. Descargar modelo: ollama pull {OLLAMA_MODEL}\n"
+                f"   3. Ejecutar Ollama: ollama serve\n"
+                f"   4. O ejecutar con --no-llm para usar solo heurísticas\n"
+            )
+            response = input("¿Deseas continuar sin LLM? (s/n): ").strip().lower()
+            if response in ("s", "si", "sí", "y", "yes"):
+                use_llm = False
+            else:
+                sys.exit(1)
 
     print("╔══════════════════════════════════════════════════════════════╗")
     print("║  ALGORITMO DE GRUPOS FUNCIONALES PARA ATLANTIS             ║")
     print("║  Golfo de California - Modelo Ecosistémico                 ║")
     print("╚══════════════════════════════════════════════════════════════╝")
-    print(f"\nModo: {'LLM (Claude)' if use_llm else 'Heurístico (sin LLM)'}")
+    print(f"\nModo: {'LLM (Ollama)' if use_llm else 'Heurístico (sin LLM)'}")
 
     # ── Cargar datos ──────────────────────────────────────────────
     species_path = Path(args.species) if args.species else None
