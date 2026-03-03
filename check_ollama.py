@@ -28,7 +28,7 @@ def check_ollama_running():
     try:
         response = requests.get(
             OLLAMA_API_URL.replace("/api/generate", ""),
-            timeout=5,
+            timeout=60,
         )
         if response.status_code == 200:
             print(f"  ✅ Ollama está ejecutándose en {OLLAMA_API_URL}")
@@ -84,7 +84,7 @@ def check_ollama_installed():
             ["ollama", "--version"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=60,
         )
         if result.returncode == 0:
             version = result.stdout.strip()

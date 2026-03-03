@@ -1,36 +1,36 @@
 #!/usr/bin/env python3
 """
-main.py - Pipeline principal para la creación de grupos funcionales
-====================================================================
+main.py - Main pipeline for functional group creation
+==========================================================
 
-Algoritmo iterativo asistido por LLM para generar una configuración
-óptima de grupos funcionales para un modelo ecosistémico ATLANTIS
-del Golfo de California.
+Iterative LLM-assisted algorithm to generate an optimal configuration
+of functional groups for an ATLANTIS ecosystem model
+of the Gulf of California.
 
-Usa Ollama como servidor LLM local (no requiere API keys en la nube).
+Uses Ollama as local LLM server (no need for cloud API keys).
 
-Requisitos previos:
-  1. Instalar Ollama desde https://ollama.ai
-  2. Descargar un modelo: ollama pull mistral (o llama2, neural-chat, etc.)
-  3. Ejecutar Ollama: ollama serve
+Prerequisites:
+  1. Install Ollama from https://ollama.ai
+  2. Download a model: ollama pull mistral (or llama2, neural-chat, etc.)
+  3. Run Ollama: ollama serve
 
-Uso:
-    # Con LLM vía Ollama (requiere que Ollama esté ejecutándose):
+Usage:
+    # With LLM via Ollama (requires Ollama running):
     python main.py
 
-    # Sin LLM (solo heurísticas, para testing):
+    # Without LLM (heuristics only, for testing):
     python main.py --no-llm
 
-    # Con archivo de especies personalizado:
-    python main.py --species datos/mis_especies.csv
+    # With custom species file:
+    python main.py --species data/my_species.csv
 
-    # Con grupos iniciales personalizados:
-    python main.py --groups datos/mis_grupos.json
+    # With custom initial groups:
+    python main.py --groups data/my_groups.json
     
-    # Especificar modelo de Ollama:
+    # Specify Ollama model:
     OLLAMA_MODEL=llama2 python main.py
 
-Autor: Generado para el proyecto ATLANTIS - Golfo de California
+Author: Generated for ATLANTIS project - Gulf of California
 """
 
 import argparse
@@ -38,7 +38,7 @@ import sys
 import os
 from pathlib import Path
 
-# Añadir directorio del proyecto al path
+# Add project directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import OLLAMA_API_URL, OLLAMA_MODEL, OUTPUT_DIR
@@ -52,24 +52,24 @@ from optimizer import run_optimization
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Algoritmo de optimización de grupos funcionales para ATLANTIS"
+        description="Functional group optimization algorithm for ATLANTIS"
     )
     parser.add_argument(
         "--species",
         type=str,
         default=None,
-        help="Ruta al CSV de ocurrencia de especies",
+        help="Path to species occurrence CSV",
     )
     parser.add_argument(
         "--groups",
         type=str,
         default=None,
-        help="Ruta al JSON de grupos funcionales iniciales",
+        help="Path to initial functional groups JSON",
     )
     parser.add_argument(
         "--no-llm",
         action="store_true",
-        help="Ejecutar sin LLM (solo heurísticas)",
+        help="Run without LLM (heuristics only)",
     )
     return parser.parse_args()
 
@@ -78,42 +78,42 @@ def main():
     args = parse_args()
     use_llm = not args.no_llm
 
-    # Verificar conexión a Ollama si se usa LLM
+    # Check Ollama connection if using LLM
     if use_llm:
         try:
             import requests
-            print(f"🔍 Verificando conexión a Ollama en {OLLAMA_API_URL}...")
+            print(f"🔍 Checking Ollama connection at {OLLAMA_API_URL}...")
             response = requests.post(
                 OLLAMA_API_URL,
                 json={"model": OLLAMA_MODEL, "prompt": "test", "stream": False},
-                timeout=5,
+                timeout=60,
             )
             if response.status_code != 200:
-                raise ConnectionError("Ollama no responde correctamente")
-            print(f"✅ Ollama conectado. Modelo: {OLLAMA_MODEL}")
+                raise ConnectionError("Ollama not responding correctly")
+            print(f"✅ Ollama connected. Model: {OLLAMA_MODEL}")
         except Exception as e:
             print(
-                f"⚠️  No se pudo conectar a Ollama en {OLLAMA_API_URL}\n"
+                f"⚠️  Could not connect to Ollama at {OLLAMA_API_URL}\n"
                 f"   Error: {e}\n"
-                f"   Soluciones:\n"
-                f"   1. Instalar Ollama desde https://ollama.ai\n"
-                f"   2. Descargar modelo: ollama pull {OLLAMA_MODEL}\n"
-                f"   3. Ejecutar Ollama: ollama serve\n"
-                f"   4. O ejecutar con --no-llm para usar solo heurísticas\n"
+                f"   Solutions:\n"
+                f"   1. Install Ollama from https://ollama.ai\n"
+                f"   2. Download model: ollama pull {OLLAMA_MODEL}\n"
+                f"   3. Run Ollama: ollama serve\n"
+                f"   4. Or run with --no-llm to use heuristics only\n"
             )
-            response = input("¿Deseas continuar sin LLM? (s/n): ").strip().lower()
+            response = input("Continue without LLM? (y/n): ").strip().lower()
             if response in ("s", "si", "sí", "y", "yes"):
                 use_llm = False
             else:
                 sys.exit(1)
 
     print("╔══════════════════════════════════════════════════════════════╗")
-    print("║  ALGORITMO DE GRUPOS FUNCIONALES PARA ATLANTIS             ║")
-    print("║  Golfo de California - Modelo Ecosistémico                 ║")
+    print("║  FUNCTIONAL GROUPS ALGORITHM FOR ATLANTIS                    ║")
+    print("║  Gulf of California - Ecosystem Model                        ║")
     print("╚══════════════════════════════════════════════════════════════╝")
-    print(f"\nModo: {'LLM (Ollama)' if use_llm else 'Heurístico (sin LLM)'}")
+    print(f"\nMode: {'LLM (Ollama)' if use_llm else 'Heuristic (no LLM)'}")
 
-    # ── Cargar datos ──────────────────────────────────────────────
+    # ── Load data ───────────────────────────────────────────────
     species_path = Path(args.species) if args.species else None
     groups_path = Path(args.groups) if args.groups else None
 
@@ -128,22 +128,22 @@ def main():
         use_llm=use_llm,
     )
 
-    # ── Resumen final ─────────────────────────────────────────────
+    # ── Final summary ──────────────────────────────────────────────
     print("\n╔══════════════════════════════════════════════════════════════╗")
-    print("║  RESUMEN FINAL                                             ║")
-    print("╠══════════════════════════════════════════════════════════════╣")
-    print(f"║  Grupos funcionales: {result.n_groups:<38}║")
-    print(f"║  Especies asignadas: {result.assigned_species}/{result.total_species:<35}║")
-    print(f"║  Cobertura: {result.coverage:<47.1%}║")
-    print(f"║  Sin grupo: {len(result.unassigned_species):<47}║")
-    status = "✅ CUMPLE" if result.meets_criteria() else "❌ NO CUMPLE"
-    print(f"║  Estado: {status:<50}║")
-    print("╠══════════════════════════════════════════════════════════════╣")
-    print(f"║  Archivos de salida en: {str(OUTPUT_DIR):<35}║")
-    print("║  - optimized_groups.json                                   ║")
-    print("║  - score_report.txt                                        ║")
-    print("║  - optimization_history.json                                ║")
-    print("╚══════════════════════════════════════════════════════════════╝")
+    print("  ║  FINAL SUMMARY                                               ║")
+    print("  ╠══════════════════════════════════════════════════════════════╣")
+    print(f" ║  Functional groups: {result.n_groups:<38}║")
+    print(f" ║  Assigned species: {result.assigned_species}/{result.total_species:<35}║")
+    print(f" ║  Coverage: {result.coverage:<47.1%}║")
+    print(f" ║  Unassigned: {len(result.unassigned_species):<47}║")
+    status = "✅ MEETS" if result.meets_criteria() else "❌ DOES NOT MEET"
+    print(f" ║  Status: {status:<50}║")
+    print(" ╠══════════════════════════════════════════════════════════════╣")
+    print(f" ║  Output files in: {str(OUTPUT_DIR):<35}║")
+    print(" ║  - optimized_groups.json                                     ║")
+    print(" ║  - score_report.txt                                          ║")
+    print(" ║  - optimization_history.json                                 ║")
+    print(" ╚══════════════════════════════════════════════════════════════╝")
 
 
 if __name__ == "__main__":

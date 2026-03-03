@@ -40,7 +40,7 @@ def test_0_ollama_connection():
         response = requests.post(
             OLLAMA_API_URL,
             json={"model": OLLAMA_MODEL, "prompt": "test", "stream": False},
-            timeout=5,
+            timeout=60,
         )
         if response.status_code == 200:
             print("✅ Ollama conectado y respondiendo")

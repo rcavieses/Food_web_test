@@ -1,10 +1,10 @@
 """
-llm_classifier.py - Interfaz con el LLM para clasificación de especies
-========================================================================
-Usa la API de Ollama (local) para:
-  1. Asignar especies a grupos funcionales existentes.
-  2. Crear nuevos grupos para especies no clasificadas.
-  3. Proponer fusiones de grupos cuando se excede el límite.
+llm_classifier.py - Interface with the LLM for species classification
+======================================================================
+Uses the Ollama API (local) for:
+  1. Assigning species to existing functional groups.
+  2. Creating new groups for unclassified species.
+  3. Proposing group merges when limit exceeds.
 """
 
 import json
@@ -19,40 +19,43 @@ from config import (
     LLM_MAX_TOKENS,
     LLM_TEMPERATURE,
     OLLAMA_TIMEOUT,
+    LLM_STREAMING,
     MAX_GROUPS,
     SCORING_CRITERIA,
 )
 from data_loader import species_to_text_list, groups_to_text
 
 
-def _call_llm(system_prompt: str, user_prompt: str) -> str:
+def _call_llm(system_prompt: str, user_prompt: str, stream: bool = False) -> str:
     """
-    Llamada genérica al LLM vía Ollama API.
+    Generic LLM call via Ollama API.
 
     Parameters
     ----------
     system_prompt : str
-        Instrucciones del sistema.
+        System instructions.
     user_prompt : str
-        Mensaje del usuario.
+        User message.
+    stream : bool, optional
+        If True, print tokens in real-time as they're generated. Default is False.
 
     Returns
     -------
     str
-        Respuesta del modelo.
+        Model response.
         
     Raises
     ------
     ConnectionError
-        Si no se puede conectar a Ollama.
+        If unable to connect to Ollama.
     """
-    # Combinar el prompt del sistema con el del usuario
+    # Combine system and user prompts
     full_prompt = f"{system_prompt}\n\n{user_prompt}"
     
     payload = {
         "model": OLLAMA_MODEL,
         "prompt": full_prompt,
-        "stream": False,
+        "stream": stream,
         "temperature": LLM_TEMPERATURE,
     }
     
@@ -61,102 +64,216 @@ def _call_llm(system_prompt: str, user_prompt: str) -> str:
             OLLAMA_API_URL,
             json=payload,
             timeout=OLLAMA_TIMEOUT,
+            stream=stream,
         )
         response.raise_for_status()
         
-        result = response.json()
-        return result.get("response", "")
+        if stream:
+            # Process streaming response
+            full_response = ""
+            print("\n  🤖 Model output:\n  ", end="", flush=True)
+            for line in response.iter_lines():
+                if line:
+                    chunk = line.decode("utf-8") if isinstance(line, bytes) else line
+                    data = json.loads(chunk)
+                    token = data.get("response", "")
+                    if token:
+                        full_response += token
+                        print(token, end="", flush=True)
+            print("\n")  # New line after streaming
+            return full_response
+        else:
+            # Non-streaming response
+            result = response.json()
+            return result.get("response", "")
     except requests.exceptions.ConnectionError as e:
         raise ConnectionError(
-            f"No se pudo conectar a Ollama en {OLLAMA_API_URL}. "
-            f"Asegúrate de que Ollama está ejecutándose: ollama serve\n"
+            f"Could not connect to Ollama at {OLLAMA_API_URL}. "
+            f"Make sure Ollama is running: ollama serve\n"
             f"Error: {e}"
         ) from e
     except requests.exceptions.Timeout:
         raise TimeoutError(
-            f"Timeout esperando respuesta de Ollama (>{OLLAMA_TIMEOUT}s). "
-            f"Intenta con un modelo más pequeño o aumenta OLLAMA_TIMEOUT."
+            f"Timeout waiting for Ollama response (>{OLLAMA_TIMEOUT}s). "
+            f"Try with a smaller model or increase OLLAMA_TIMEOUT."
         )
     except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"Error en la solicitud a Ollama: {e}") from e
+        raise RuntimeError(f"Error in Ollama request: {e}") from e
 
 
 def _extract_json_from_response(response: str) -> dict | list:
     """
-    Extrae JSON de la respuesta del LLM, manejando posibles bloques de código.
-    Maneja JSON incompleto intentando cerrarlo automáticamente.
+    Extract JSON from LLM response, handling possible code blocks.
+    Handles incomplete JSON by trying to close it automatically.
+    Robust to truncated responses.
 
     Parameters
     ----------
     response : str
-        Texto crudo de la respuesta del LLM.
+        Raw text from LLM response.
 
     Returns
     -------
     dict | list
-        Objeto JSON parseado.
+        Parsed JSON object.
     """
-    # Intentar extraer de un bloque ```json ... ```
-    json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
+    # Try to extract from ```json ... ``` block
+    json_match = re.search(r"```json\s*(.*?)(?:\s*```|$)", response, re.DOTALL)
     if json_match:
         extracted = json_match.group(1)
-        try:
-            return json.loads(extracted)
-        except json.JSONDecodeError:
-            # Intentar cerrar incompletos
-            try:
-                incomplete = extracted.rstrip()
-                if incomplete.endswith(","):
-                    incomplete = incomplete[:-1]
-                if incomplete.startswith("["):
-                    return json.loads(incomplete + "]")
-                elif incomplete.startswith("{"):
-                    return json.loads(incomplete + "}")
-            except json.JSONDecodeError:
-                pass
+        result = _try_parse_json(extracted)
+        if result is not None:
+            return result
 
-    # Intentar extraer de un bloque ``` ... ```
-    code_match = re.search(r"```\s*(.*?)\s*```", response, re.DOTALL)
+    # Try to extract from generic ``` ... ``` block
+    code_match = re.search(r"```\s*(.*?)(?:\s*```|$)", response, re.DOTALL)
     if code_match:
         extracted = code_match.group(1)
-        try:
-            return json.loads(extracted)
-        except json.JSONDecodeError:
-            try:
-                incomplete = extracted.rstrip()
-                if incomplete.endswith(","):
-                    incomplete = incomplete[:-1]
-                if incomplete.startswith("["):
-                    return json.loads(incomplete + "]")
-                elif incomplete.startswith("{"):
-                    return json.loads(incomplete + "}")
-            except json.JSONDecodeError:
-                pass
+        result = _try_parse_json(extracted)
+        if result is not None:
+            return result
 
-    # Intentar parsear directamente (buscar primer [ o {)
+    # Try direct parsing (find first [ or {)
     for i, char in enumerate(response):
         if char in ("[", "{"):
+            result = _try_parse_json(response[i:])
+            if result is not None:
+                return result
+
+    raise ValueError(f"Could not extract JSON from response:\n{response[:500]}")
+
+
+def _try_parse_json(text: str) -> dict | list | None:
+    """
+    Attempt to parse JSON from text, trying various recovery strategies
+    for incomplete/truncated JSON.
+    
+    Parameters
+    ----------
+    text : str
+        Text potentially containing JSON (may be incomplete).
+    
+    Returns
+    -------
+    dict | list | None
+        Parsed JSON if successful, None otherwise.
+    """
+    # First, try direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    
+    # Try to fix incomplete JSON
+    text_stripped = text.rstrip()
+    
+    # Remove trailing commas before closing brackets
+    text_fixed = re.sub(r',(\s*[}\]])', r'\1', text_stripped)
+    
+    try:
+        return json.loads(text_fixed)
+    except json.JSONDecodeError:
+        pass
+    
+    # Try to close incomplete JSON structures
+    # Count unmatched braces/brackets
+    open_braces = text_fixed.count('{') - text_fixed.count('}')
+    open_brackets = text_fixed.count('[') - text_fixed.count(']')
+    
+    # Try closing with appropriate closing characters
+    closing_str = '}' * max(0, open_braces) + ']' * max(0, open_brackets)
+    
+    try:
+        return json.loads(text_fixed + closing_str)
+    except json.JSONDecodeError:
+        pass
+    
+    # Last resort: try to find the last complete JSON object/array in the text
+    # Look backwards for the last closing brace/bracket that forms valid JSON
+    for end_pos in range(len(text_fixed), 0, -1):
+        for closing in ('}]', '}', ']'):
+            test_text = text_fixed[:end_pos] + closing
             try:
-                return json.loads(response[i:])
+                return json.loads(test_text)
             except json.JSONDecodeError:
-                # Intentar cerrar incompleto
-                try:
-                    incomplete = response[i:].rstrip()
-                    if incomplete.endswith(","):
-                        incomplete = incomplete[:-1]
-                    closing = "]" if char == "[" else "}"
-                    return json.loads(incomplete + closing)
-                except json.JSONDecodeError:
-                    continue
+                continue
+    
+    return None
 
-    raise ValueError(f"No se pudo extraer JSON de la respuesta:\n{response[:500]}")
+
+def _deduplicate_assignments(result: dict | list) -> dict | list:
+    """
+    Remove duplicate species assignments, keeping only the first occurrence.
+    
+    Parameters
+    ----------
+    result : dict | list
+        JSON response from LLM containing assignments.
+    
+    Returns
+    -------
+    dict | list
+        Deduplicated result.
+    """
+    if isinstance(result, dict) and "assignments" in result:
+        assignments = result.get("assignments", [])
+        if assignments:
+            seen_species = set()
+            deduped = []
+            removed = 0
+            
+            for assignment in assignments:
+                sp_name = assignment.get("species", "").lower().strip()
+                if sp_name and sp_name not in seen_species:
+                    seen_species.add(sp_name)
+                    deduped.append(assignment)
+                elif sp_name:
+                    removed += 1
+            
+            if removed > 0:
+                print(f"    ⚠️  Removed {removed} duplicate species from model response")
+            
+            result["assignments"] = deduped
+    
+    return result
+
+
+def _is_response_duplicate(current_response: dict | list, previous_response: dict | list) -> bool:
+    """
+    Check if the current LLM response is identical to the previous one.
+    Used to skip processing if the model returns the same result for consecutive batches.
+    
+    Parameters
+    ----------
+    current_response : dict | list
+        Current LLM response (parsed JSON).
+    previous_response : dict | list
+        Previous LLM response (parsed JSON).
+    
+    Returns
+    -------
+    bool
+        True if responses are identical, False otherwise.
+    """
+    if previous_response is None:
+        return False
+    
+    try:
+        # Serialize to JSON string for comparison (ignores dict ordering)
+        current_json = json.dumps(current_response, sort_keys=True)
+        previous_json = json.dumps(previous_response, sort_keys=True)
+        return current_json == previous_json
+    except (TypeError, ValueError):
+        # If serialization fails, they're not duplicates
+        return False
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# PASO 1: Asignar especies a grupos existentes
+# STEP 1: Assign species to existing groups
 # ═══════════════════════════════════════════════════════════════════════
 
-BATCH_SIZE = 250  # Especies por llamada al LLM (balance entre eficiencia y confiabilidad)
+BATCH_SIZE = 187  # Species per LLM call (reduced by 25% from 250 for better stability)
+                  # 187 ≈ 250 * 0.75
 
 
 def classify_species_into_groups(
@@ -165,80 +282,90 @@ def classify_species_into_groups(
     groups: list[dict],
 ) -> tuple[list[dict], list[str]]:
     """
-    Usa el LLM para asignar cada especie a un grupo funcional existente.
-    Procesa en lotes de BATCH_SIZE especies para respetar los límites del LLM.
+    Use LLM to assign each species to an existing functional group.
+    Processes in batches of BATCH_SIZE species to respect LLM limits.
 
     Parameters
     ----------
     species_text : str
-        Lista de especies formateada como texto.
+        Formatted list of species as text.
     groups_text : str
-        Lista de grupos funcionales formateada como texto.
+        Formatted list of functional groups as text.
     groups : list[dict]
-        Grupos funcionales actuales (se modifican in-place las listas de especies).
+        Current functional groups (species lists are modified in-place).
 
     Returns
     -------
     tuple[list[dict], list[str]]
-        - Grupos actualizados con especies asignadas.
-        - Lista de nombres de especies que no pudieron ser asignadas.
+        - Updated groups with assigned species.
+        - List of species names that could not be assigned.
     """
-    # Separar la lista de especies en líneas individuales
+    # Split species list into individual lines
     species_lines = [l for l in species_text.strip().split("\n") if l.strip()]
     total = len(species_lines)
 
-    # Dividir en lotes
+    # Split into batches
     batches = [
         species_lines[i : i + BATCH_SIZE]
         for i in range(0, total, BATCH_SIZE)
     ]
     n_batches = len(batches)
-    print(f"[LLM] Clasificando {total} especies en {n_batches} lotes de ~{BATCH_SIZE}...")
+    print(f"[LLM] Classifying {total} species in {n_batches} batches of ~{BATCH_SIZE}...")
 
-    system_prompt = """Eres un ecólogo marino experto en modelación de ecosistemas.
-Tu tarea es asignar especies a grupos funcionales existentes basándote en sus
-características ecológicas y funcionales.
+    system_prompt = """You are an expert marine ecologist in ecosystem modeling.
+Your task is to assign species to existing functional groups based on their
+ecological and functional characteristics.
 
-REGLAS:
-- Cada especie debe asignarse al grupo que mejor represente su rol funcional.
-- Si una especie NO encaja razonablemente en ningún grupo existente, márcala como "sin_grupo".
-- Prioriza el rol trófico y el hábitat sobre la taxonomía.
-- Responde ÚNICAMENTE con un JSON válido, sin texto adicional."""
+RULES:
+- Each species must be assigned to the group that best represents its functional role.
+- If a species does NOT fit reasonably into any existing group, mark it as "unassigned".
+- Prioritize trophic role and habitat over taxonomy.
+- Respond ONLY with valid JSON, no additional text."""
 
     group_map = {g["group_id"]: i for i, g in enumerate(groups)}
     all_unassigned = []
+    previous_result = None  # Track previous response to detect duplicates
 
     for batch_idx, batch in enumerate(batches, 1):
         batch_text = "\n".join(batch)
-        user_prompt = f"""## GRUPOS FUNCIONALES ACTUALES:
+        user_prompt = f"""## CURRENT FUNCTIONAL GROUPS:
 {groups_text}
 
-## LISTA DE ESPECIES A CLASIFICAR (lote {batch_idx}/{n_batches}):
+## LIST OF SPECIES TO CLASSIFY (batch {batch_idx}/{n_batches}):
 {batch_text}
 
-## INSTRUCCIÓN:
-Asigna cada especie al group_id del grupo funcional más apropiado.
-Si no encaja en ninguno, usa "sin_grupo".
+## INSTRUCTION:
+Assign each species to the group_id of the most appropriate functional group.
+If it doesn't fit in any, use "unassigned".
 
-Responde con un JSON con esta estructura:
+Respond with JSON with this structure:
 ```json
 {{
   "assignments": [
-    {{"species": "nombre cientifico", "group_id": "FG01", "reason": "breve justificación"}},
-    {{"species": "otra especie", "group_id": "sin_grupo", "reason": "motivo"}}
+    {{"species": "scientific name", "group_id": "FG01", "reason": "brief justification"}},
+    {{"species": "another species", "group_id": "unassigned", "reason": "reason"}}
   ]
 }}
-```"""
+`"""
 
-        print(f"  [Lote {batch_idx}/{n_batches}] Procesando {len(batch)} especies...")
-        response = _call_llm(system_prompt, user_prompt)
+        print(f"  [Batch {batch_idx}/{n_batches}] Processing {len(batch)} species...")
+        response = _call_llm(system_prompt, user_prompt, stream=LLM_STREAMING)
         result = _extract_json_from_response(response)
+        result = _deduplicate_assignments(result)
+        
+        # Skip if response is identical to previous batch (model is repeating)
+        if _is_response_duplicate(result, previous_result):
+            print(f"  [Batch {batch_idx}/{n_batches}] ⏭️  SKIPPING - Response identical to previous batch")
+            previous_result = result
+            continue
+        
+        previous_result = result
 
         for assignment in result.get("assignments", []):
             sp = assignment["species"]
             gid = assignment["group_id"]
 
-            if gid == "sin_grupo" or gid not in group_map:
+            if gid == "unassigned" or gid not in group_map:
                 all_unassigned.append(sp)
             else:
                 idx = group_map[gid]
@@ -246,18 +373,18 @@ Responde con un JSON con esta estructura:
                     groups[idx]["species"].append(sp)
 
         assigned_so_far = sum(len(g["species"]) for g in groups)
-        print(f"  [Lote {batch_idx}/{n_batches}] Acumulado: {assigned_so_far} asignadas, {len(all_unassigned)} sin grupo")
+        print(f"  [Batch {batch_idx}/{n_batches}] Accumulated: {assigned_so_far} assigned, {len(all_unassigned)} unassigned")
 
     print(
-        f"[LLM] Clasificación completada: "
-        f"{sum(len(g['species']) for g in groups)} asignadas, "
-        f"{len(all_unassigned)} sin grupo"
+        f"[LLM] Classification completed: "
+        f"{sum(len(g['species']) for g in groups)} assigned, "
+        f"{len(all_unassigned)} unassigned"
     )
     return groups, all_unassigned
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# PASO 2: Crear nuevos grupos para especies sin clasificar
+# STEP 2: Create new groups for unclassified species
 # ═══════════════════════════════════════════════════════════════════════
 
 def create_groups_for_unassigned(
@@ -289,73 +416,83 @@ def create_groups_for_unassigned(
     existing_names = [g["group_name"] for g in existing_groups]
     next_id = len(existing_groups) + 1
 
-    system_prompt = """Eres un ecólogo marino experto en modelación de ecosistemas.
-Tu tarea es crear NUEVOS grupos funcionales para especies que no encajan en los grupos existentes.
+    system_prompt = """You are an expert marine ecologist in ecosystem modeling.
+Your task is to create NEW functional groups for species that don't fit in existing groups.
 
-REGLAS:
-- Cada grupo debe representar un ROL FUNCIONAL específico en el ecosistema.
-- Agrupa especies por similitud funcional (hábitat + nivel trófico + rol ecológico).
-- Evita crear grupos redundantes con los existentes.
-- Minimiza el número de grupos nuevos agrupando especies cuando sea ecológicamente válido.
-- No crees más de 40 grupos nuevos por lote.
-- Responde ÚNICAMENTE con un JSON válido, sin texto adicional."""
+RULES:
+- Each group must represent a specific FUNCTIONAL ROLE in the ecosystem.
+- Group species by functional similarity (habitat + trophic level + ecological role).
+- Avoid creating redundant groups with existing ones.
+- Minimize new groups by clustering species when ecologically valid.
+- Don't create more than 40 new groups per batch.
+- Respond ONLY with valid JSON, no additional text."""
 
-    # Procesar en lotes
+    # Process in batches
     batches = [
         unassigned_species[i : i + BATCH_SIZE]
         for i in range(0, len(unassigned_species), BATCH_SIZE)
     ]
     n_batches = len(batches)
     print(
-        f"[LLM] Creando grupos para {len(unassigned_species)} especies "
-        f"sin clasificar ({n_batches} lotes)..."
+        f"[LLM] Creating groups for {len(unassigned_species)} unclassified species "
+        f"({n_batches} batches)..."
     )
 
     all_new_groups = []
+    previous_result = None  # Track previous response to detect duplicates
 
     for batch_idx, batch in enumerate(batches, 1):
         unassigned_str = "\n".join(f"- {sp}" for sp in batch)
         current_next_id = next_id + len(all_new_groups)
 
-        user_prompt = f"""## ESPECIES SIN GRUPO ASIGNADO (lote {batch_idx}/{n_batches}):
+        user_prompt = f"""## UNASSIGNED SPECIES (batch {batch_idx}/{n_batches}):
 {unassigned_str}
 
-## GRUPOS YA EXISTENTES (para evitar redundancias):
+## EXISTING GROUPS (to avoid redundancies):
 {', '.join(existing_names + [g['group_name'] for g in all_new_groups])}
 
-## INSTRUCCIÓN:
-Crea los grupos funcionales necesarios para clasificar estas especies.
-Comienza los IDs desde FG{current_next_id:02d}.
+## INSTRUCTION:
+Create the functional groups needed to classify these species.
+Start IDs from FG{current_next_id:02d}.
 
-Responde con un JSON con esta estructura:
+Respond with JSON with this structure:
 ```json
 {{
   "new_groups": [
     {{
       "group_id": "FG{current_next_id:02d}",
-      "group_name": "Nombre descriptivo del grupo",
-      "description": "Descripción del rol funcional en el ecosistema",
+      "group_name": "Descriptive group name",
+      "description": "Description of functional role in ecosystem",
       "characteristics": {{
         "habitat": "benthic/pelagic/demersal/coastal/terrestrial",
         "trophic_level": "carnivore/herbivore/omnivore/etc.",
         "size_class": "small/medium/large",
-        "taxonomic_affinity": "grupo taxonómico principal"
+        "taxonomic_affinity": "main taxonomic group"
       }},
-      "species": ["especie1", "especie2"]
+      "species": ["species1", "species2"]
     }}
   ]
 }}
 ```"""
 
-        print(f"  [Lote {batch_idx}/{n_batches}] Creando grupos para {len(batch)} especies...")
-        response = _call_llm(system_prompt, user_prompt)
+        print(f"  [Batch {batch_idx}/{n_batches}] Creating groups for {len(batch)} species...")
+        response = _call_llm(system_prompt, user_prompt, stream=LLM_STREAMING)
         result = _extract_json_from_response(response)
+        result = _deduplicate_assignments(result)
+        
+        # Skip if response is identical to previous batch (model is repeating)
+        if _is_response_duplicate(result, previous_result):
+            print(f"  [Batch {batch_idx}/{n_batches}] ⏭️  SKIPPING - Response identical to previous batch")
+            previous_result = result
+            continue
+        
+        previous_result = result
 
         new_groups = result.get("new_groups", [])
         all_new_groups.extend(new_groups)
-        print(f"  [Lote {batch_idx}/{n_batches}] {len(new_groups)} grupos nuevos (total acumulado: {len(all_new_groups)})")
+        print(f"  [Batch {batch_idx}/{n_batches}] {len(new_groups)} new groups (total: {len(all_new_groups)})")
 
-    print(f"[LLM] Se crearon {len(all_new_groups)} nuevos grupos funcionales en total")
+    print(f"[LLM] Created {len(all_new_groups)} new functional groups in total")
     return all_new_groups
 
 
@@ -427,8 +564,9 @@ Responde con:
 ```"""
 
     print("[LLM] Evaluando importancia de grupos funcionales...")
-    response = _call_llm(system_prompt, user_prompt)
+    response = _call_llm(system_prompt, user_prompt, stream=LLM_STREAMING)
     result = _extract_json_from_response(response)
+    result = _deduplicate_assignments(result)
 
     # Mapear puntajes a los grupos
     score_map = {s["group_id"]: s for s in result.get("scores", [])}
@@ -523,8 +661,9 @@ Responde con:
 ```"""
 
     print(f"[LLM] Proponiendo fusiones ({current_count} → {target_count} grupos)...")
-    response = _call_llm(system_prompt, user_prompt)
+    response = _call_llm(system_prompt, user_prompt, stream=LLM_STREAMING)
     result = _extract_json_from_response(response)
+    result = _deduplicate_assignments(result)
 
     # Aplicar fusiones
     group_map = {g["group_id"]: g for g in groups}
